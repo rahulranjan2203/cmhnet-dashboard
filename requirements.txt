@@ -1,0 +1,8 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+streamlit
+xgboost
+numpy
+pandas
+shap
+matplotlib
