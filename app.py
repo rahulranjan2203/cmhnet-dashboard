@@ -256,8 +256,13 @@ def preprocess_weather(weather_data_7d, scaler_tuple):
     # Safe division to prevent division by zero
     safe_std = np.where(std == 0, 1e-7, std)
     
-    # Broadcast standardization: (X - mean) / std
-    standardized = (weather_arr - mean) / safe_std
+    # Robust broadcasting: handles (3,), (1, 3), (7, 3), (1, 7, 3), or flattened (21,)
+    if mean.size == 21 and mean.ndim == 1:
+        flattened = weather_arr.reshape(1, 21)
+        standardized = (flattened - mean) / safe_std
+        standardized = standardized.reshape(1, 7, 3)
+    else:
+        standardized = (weather_arr - mean) / safe_std
     
     # Convert to PyTorch float32 tensor
     tensor_x = torch.tensor(standardized, dtype=torch.float32)
@@ -387,68 +392,94 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Scenario Presets for rapid evaluation
-scenario = st.sidebar.selectbox(
+# Scenario Presets definition with high contrast in hydrological saturation
+PRESETS = {
+    "Severe Monsoonal Deluge (Cascading High Risk)": {
+        "weather": [
+            (35.0, 24.0, 85), (65.0, 23.0, 88), (110.0, 22.0, 92),
+            (160.0, 21.5, 95), (220.0, 21.0, 98), (290.0, 20.5, 99), (340.0, 20.0, 100)
+        ],
+        "elevation": 1850.0,
+        "slope": 42.0,
+        "twi": 11.5
+    },
+    "Moderate Rain on Steep Mountain Slope": {
+        "weather": [
+            (8.0, 24.0, 65), (15.0, 23.5, 70), (28.0, 23.0, 75),
+            (45.0, 22.0, 82), (65.0, 21.5, 86), (80.0, 21.0, 90), (105.0, 20.5, 94)
+        ],
+        "elevation": 2100.0,
+        "slope": 34.0,
+        "twi": 7.5
+    },
+    "Dry Mild Weather (Baseline Low Risk)": {
+        "weather": [
+            (0.0, 28.0, 42), (0.0, 29.0, 40), (0.0, 27.5, 45),
+            (0.5, 26.0, 50), (0.0, 27.0, 46), (1.0, 26.5, 48), (0.0, 28.0, 44)
+        ],
+        "elevation": 550.0,
+        "slope": 10.0,
+        "twi": 4.8
+    }
+}
+
+def load_preset_into_state(preset_name):
+    if preset_name in PRESETS:
+        p_data = PRESETS[preset_name]
+        for d_i, (p, t, h) in enumerate(p_data["weather"]):
+            st.session_state[f"precip_d{d_i+1}"] = float(p)
+            st.session_state[f"temp_d{d_i+1}"] = float(t)
+            st.session_state[f"rh_d{d_i+1}"] = int(h)
+        st.session_state["elev_state"] = float(p_data["elevation"])
+        st.session_state["slope_state"] = float(p_data["slope"])
+        st.session_state["twi_state"] = float(p_data["twi"])
+
+# Initialize session state on initial run
+if "precip_d1" not in st.session_state:
+    st.session_state["preset_selector"] = "Moderate Rain on Steep Mountain Slope"
+    load_preset_into_state("Moderate Rain on Steep Mountain Slope")
+    st.session_state["has_evaluated"] = False
+
+def on_preset_change():
+    selected = st.session_state.get("preset_selector")
+    if selected in PRESETS:
+        load_preset_into_state(selected)
+        st.session_state["has_evaluated"] = True
+
+st.sidebar.selectbox(
     "Load Scenario Preset:",
     [
-        "Custom Configuration",
-        "Severe Monsoonal Deluge (Cascading High Risk)",
         "Moderate Rain on Steep Mountain Slope",
-        "Dry Mild Weather (Baseline Low Risk)"
-    ]
+        "Severe Monsoonal Deluge (Cascading High Risk)",
+        "Dry Mild Weather (Baseline Low Risk)",
+        "Custom Configuration"
+    ],
+    key="preset_selector",
+    on_change=on_preset_change
 )
-
-# Preset definitions [Day 1 .. Day 7: (Precip, Temp, Humidity)]
-if scenario == "Severe Monsoonal Deluge (Cascading High Risk)":
-    default_weather = [
-        (25.0, 26.0, 80), (45.0, 25.0, 85), (80.0, 24.0, 90),
-        (120.0, 23.0, 94), (160.0, 22.0, 96), (210.0, 21.0, 98), (280.0, 20.5, 99)
-    ]
-    default_elev, default_slope, default_twi = 1650.0, 38.5, 9.8
-elif scenario == "Moderate Rain on Steep Mountain Slope":
-    default_weather = [
-        (5.0, 24.0, 65), (10.0, 23.5, 70), (20.0, 23.0, 75),
-        (35.0, 22.5, 80), (50.0, 21.5, 88), (65.0, 21.0, 92), (85.0, 20.0, 95)
-    ]
-    default_elev, default_slope, default_twi = 2100.0, 34.0, 7.2
-elif scenario == "Dry Mild Weather (Baseline Low Risk)":
-    default_weather = [
-        (0.0, 28.0, 45), (0.0, 29.0, 42), (0.5, 27.5, 50),
-        (1.0, 26.0, 52), (0.0, 27.0, 48), (2.0, 26.5, 55), (0.0, 28.5, 46)
-    ]
-    default_elev, default_slope, default_twi = 650.0, 12.0, 5.4
-else:
-    # Balanced default
-    default_weather = [
-        (12.0, 26.5, 75), (18.5, 25.8, 80), (35.0, 24.2, 85),
-        (55.0, 23.5, 90), (95.0, 22.0, 94), (140.0, 21.5, 97), (185.0, 20.8, 99)
-    ]
-    default_elev, default_slope, default_twi = 1450.0, 31.5, 8.2
 
 st.sidebar.markdown('<div class="sidebar-section-hdr">7-Day Weather Sequence</div>', unsafe_allow_html=True)
 st.sidebar.caption("Sequence order: Precipitation (mm), Temp (°C), Humidity (%)")
 
 weather_inputs = []
-# Create interactive input container for Days 1 through 7
 day_tabs = st.sidebar.tabs([f"D{d}" for d in range(1, 8)])
 
 for idx, tab in enumerate(day_tabs):
     with tab:
-        p_def, t_def, h_def = default_weather[idx]
         st.markdown(f"**Day {idx + 1} Conditions**")
         precip = st.number_input(
             f"Precipitation (mm) - Day {idx+1}",
-            min_value=0.0, max_value=800.0, value=float(p_def), step=1.0,
+            min_value=0.0, max_value=800.0, step=1.0,
             key=f"precip_d{idx+1}"
         )
         temp = st.number_input(
             f"Temperature (°C) - Day {idx+1}",
-            min_value=-20.0, max_value=55.0, value=float(t_def), step=0.5,
+            min_value=-20.0, max_value=55.0, step=0.5,
             key=f"temp_d{idx+1}"
         )
         rh = st.slider(
             f"Relative Humidity (%) - Day {idx+1}",
-            min_value=1, max_value=100, value=int(h_def), step=1,
+            min_value=1, max_value=100, step=1,
             key=f"rh_d{idx+1}"
         )
         weather_inputs.append([precip, temp, rh])
@@ -457,17 +488,20 @@ for idx, tab in enumerate(day_tabs):
 st.sidebar.markdown('<div class="sidebar-section-hdr">Static Topography</div>', unsafe_allow_html=True)
 elevation = st.sidebar.number_input(
     "Elevation (meters)",
-    min_value=0.0, max_value=8848.0, value=float(default_elev), step=25.0,
+    min_value=0.0, max_value=8848.0, step=25.0,
+    key="elev_state",
     help="Altitude above sea level"
 )
 slope = st.sidebar.slider(
     "Slope Angle (degrees)",
-    min_value=0.0, max_value=75.0, value=float(default_slope), step=0.5,
+    min_value=0.0, max_value=75.0, step=0.5,
+    key="slope_state",
     help="Terrain inclination angle"
 )
 twi = st.sidebar.number_input(
     "Topographic Wetness Index (TWI)",
-    min_value=0.0, max_value=30.0, value=float(default_twi), step=0.1,
+    min_value=0.0, max_value=30.0, step=0.1,
+    key="twi_state",
     help="ln(a / tan(beta)): tendency of site to accumulate soil moisture"
 )
 
@@ -542,8 +576,13 @@ button_col1, button_col2, button_col3 = st.columns([1, 2, 1])
 with button_col2:
     run_analysis = st.button("Run CMH-Net Risk Analysis", type="primary", use_container_width=True)
 
-# Main Inference Execution
+# Main Inference Execution: runs on button click OR when a preset is selected
+should_run = run_analysis or st.session_state.get("has_evaluated", False)
+
 if run_analysis:
+    st.session_state["has_evaluated"] = True
+
+if should_run:
     with st.spinner("Executing CMH-Net Cascading Inference Pipeline..."):
         try:
             # 1. Preprocessing
